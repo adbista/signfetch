@@ -112,34 +112,54 @@ def server_base_url() -> str:
             thread.join()
 
 
+SCENARIOS = {
+    "scenario-1": {
+        "target": "/record-content",
+        "expect_zip": True,
+        "files": {},
+    },
+    "scenario-2": {
+        "target": "/record",
+        "expect_zip": False,
+        "files": {
+            "data-a.csv": b"alpha",
+            "b.json": b"{\"value\": 1}",
+            "c.txt": b"gamma",
+        },
+    },
+}
+
+
+def _selected_scenarios() -> list[str]:
+    scenario = os.environ.get("E2E_SCENARIO")
+    if scenario:
+        return [scenario]
+    return list(SCENARIOS.keys())
+
+
 @pytest.mark.e2e
-def test_examples_run(tmp_path: Path, server_base_url: str) -> None:
+@pytest.mark.parametrize("scenario", _selected_scenarios())
+def test_examples_run(tmp_path: Path, server_base_url: str, scenario: str) -> None:
+    settings = SCENARIOS[scenario]
     repo_root = Path(__file__).resolve().parents[2]
-    scenario_one = repo_root / "examples" / "scenario-1" / "run.py"
-    scenario_two = repo_root / "examples" / "scenario-2" / "run.py"
+    script_path = repo_root / "examples" / scenario / "run.py"
 
-    output_one = tmp_path / "scenario-1"
-    output_two = tmp_path / "scenario-2"
-    output_one.mkdir(parents=True, exist_ok=True)
-    output_two.mkdir(parents=True, exist_ok=True)
+    output_dir = tmp_path / scenario
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    env_one = os.environ.copy()
-    env_one["SIGNFETCH_TARGET"] = f"{server_base_url}/record-content"
-    env_one["SIGNFETCH_OUTPUT"] = str(output_one)
+    env = os.environ.copy()
+    env["SIGNFETCH_TARGET"] = f"{server_base_url}{settings['target']}"
+    env["SIGNFETCH_OUTPUT"] = str(output_dir)
 
-    env_two = os.environ.copy()
-    env_two["SIGNFETCH_TARGET"] = f"{server_base_url}/record"
-    env_two["SIGNFETCH_OUTPUT"] = str(output_two)
+    subprocess.run([sys.executable, str(script_path)], check=True, cwd=repo_root, env=env)
 
-    subprocess.run([sys.executable, str(scenario_one)], check=True, cwd=repo_root, env=env_one)
-    subprocess.run([sys.executable, str(scenario_two)], check=True, cwd=repo_root, env=env_two)
+    if settings["expect_zip"]:
+        archive_path = output_dir / "content.zip"
+        assert archive_path.exists()
+        with zipfile.ZipFile(archive_path, "r") as archive:
+            assert archive.namelist() == ["payload"]
+            assert archive.read("payload") == b"opaque"
+        return
 
-    archive_path = output_one / "content.zip"
-    assert archive_path.exists()
-    with zipfile.ZipFile(archive_path, "r") as archive:
-        assert archive.namelist() == ["payload"]
-        assert archive.read("payload") == b"opaque"
-
-    assert (output_two / "data-a.csv").read_bytes() == b"alpha"
-    assert (output_two / "b.json").read_bytes() == b"{\"value\": 1}"
-    assert (output_two / "c.txt").read_bytes() == b"gamma"
+    for name, payload in settings["files"].items():
+        assert (output_dir / name).read_bytes() == payload

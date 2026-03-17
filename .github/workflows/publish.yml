@@ -1,0 +1,85 @@
+name: publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      ci_run_id:
+        description: "CI workflow run ID with signfetch-package artifact"
+        required: true
+        type: string
+      stage:
+        description: "Publishing stage"
+        required: true
+        default: "check"
+        type: choice
+        options:
+          - check
+          - test
+          - prod
+
+jobs:
+  publish-check:
+    if: ${{ inputs.stage == 'check' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Download package artifact from CI
+        uses: actions/download-artifact@v4
+        with:
+          name: signfetch-package
+          run-id: ${{ inputs.ci_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: dist
+      - name: Validate package and tag
+        run: bash scripts/publish_testpypi.sh check
+
+  publish-test:
+    if: ${{ inputs.stage == 'test' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Download package artifact from CI
+        uses: actions/download-artifact@v4
+        with:
+          name: signfetch-package
+          run-id: ${{ inputs.ci_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: dist
+      - name: Publish to TestPyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD_TESTPYPI: ${{ secrets.TEST_PYPI_API_TOKEN }}
+        run: bash scripts/publish_testpypi.sh test
+
+  publish-prod:
+    if: ${{ inputs.stage == 'prod' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Download package artifact from CI
+        uses: actions/download-artifact@v4
+        with:
+          name: signfetch-package
+          run-id: ${{ inputs.ci_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: dist
+      - name: Publish to PyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD_PYPI: ${{ secrets.PYPI_API_TOKEN }}
+        run: bash scripts/publish_testpypi.sh prod
