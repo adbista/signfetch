@@ -26,9 +26,9 @@ class SignpostingHandler(BaseHTTPRequestHandler):
             )
             self.end_headers()
             return
-        if self.path == "/record-2":
+        if self.path == "/record-content":
             self.send_response(200)
-            self.send_header("Link", "</files/opaque>; rel=\"item\"")
+            self.send_header("Link", "</files/content>; rel=\"item\"")
             self.end_headers()
             return
         self.send_response(404)
@@ -47,7 +47,7 @@ class SignpostingHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body.encode("utf-8"))
             return
-        if self.path == "/record-2":
+        if self.path == "/record-content":
             body = "<html></html>"
             self.send_response(200)
             self.send_header("Content-Type", "text/html")
@@ -88,7 +88,7 @@ class SignpostingHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(content)
             return
-        if self.path == "/files/opaque":
+        if self.path == "/files/content":
             content = b"opaque"
             self.send_response(200)
             self.send_header("Content-Length", str(len(content)))
@@ -124,22 +124,22 @@ def test_examples_run(tmp_path: Path, server_base_url: str) -> None:
     output_two.mkdir(parents=True, exist_ok=True)
 
     env_one = os.environ.copy()
-    env_one["SIGNFETCH_TARGET"] = f"{server_base_url}/record"
+    env_one["SIGNFETCH_TARGET"] = f"{server_base_url}/record-content"
     env_one["SIGNFETCH_OUTPUT"] = str(output_one)
 
     env_two = os.environ.copy()
-    env_two["SIGNFETCH_TARGET"] = f"{server_base_url}/record-2"
+    env_two["SIGNFETCH_TARGET"] = f"{server_base_url}/record"
     env_two["SIGNFETCH_OUTPUT"] = str(output_two)
 
     subprocess.run([sys.executable, str(scenario_one)], check=True, cwd=repo_root, env=env_one)
     subprocess.run([sys.executable, str(scenario_two)], check=True, cwd=repo_root, env=env_two)
 
-    assert (output_one / "data-a.csv").read_bytes() == b"alpha"
-    assert (output_one / "b.json").read_bytes() == b"{\"value\": 1}"
-    assert (output_one / "c.txt").read_bytes() == b"gamma"
-
-    archive_path = output_two / "opaque.zip"
+    archive_path = output_one / "content.zip"
     assert archive_path.exists()
     with zipfile.ZipFile(archive_path, "r") as archive:
         assert archive.namelist() == ["payload"]
         assert archive.read("payload") == b"opaque"
+
+    assert (output_two / "data-a.csv").read_bytes() == b"alpha"
+    assert (output_two / "b.json").read_bytes() == b"{\"value\": 1}"
+    assert (output_two / "c.txt").read_bytes() == b"gamma"
