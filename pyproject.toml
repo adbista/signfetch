@@ -9,7 +9,7 @@ description = "Download data resources discovered via FAIR Signposting item link
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [
-  { name = "Adam Bista" }
+  { name = "Adam Biśta" }
 ]
 license = { text = "MIT" }
 keywords = ["signposting", "fair", "download", "data", "linkset"]
