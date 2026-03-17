@@ -20,34 +20,50 @@ class SignpostingHarvester:
         head_response = self._http.head(target)
         head_response.raise_for_status()
         resolved_url = str(head_response.url)
+
         discovered.extend(
-            self._parse_link_headers(head_response.headers.get_list('link'), resolved_url, source='http-header')
+            self._parse_link_headers(
+                head_response.headers.get_list("link"),
+                resolved_url,
+                source="http-header",
+            )
         )
 
         get_response = self._http.get(resolved_url)
         get_response.raise_for_status()
+
         discovered.extend(
-            self._parse_link_headers(get_response.headers.get_list('link'), str(get_response.url), source='http-header')
+            self._parse_link_headers(
+                get_response.headers.get_list("link"),
+                str(get_response.url),
+                source="http-header",
+            )
         )
         discovered.extend(
-            self._html_parser.parse(get_response.text, str(get_response.url), source='html-link')
+            self._html_parser.parse(
+                get_response.text,
+                str(get_response.url),
+                source="html-link",
+            )
         )
 
-        linksets = [link for link in discovered if link.rel == 'linkset']
+        linksets = [link for link in discovered if link.rel == "linkset"]
         for linkset in linksets:
             linkset_response = self._http.get(linkset.url)
             linkset_response.raise_for_status()
+
             discovered.extend(
                 self._linkset_parser.parse(
                     linkset_response.text,
                     base_url=str(linkset_response.url),
-                    source='linkset',
-                    content_type=linkset_response.headers.get('content-type'),
+                    source="linkset",
+                    content_type=linkset_response.headers.get("content-type"),
                 )
             )
 
-        item_links = [link for link in discovered if link.rel == 'item']
+        item_links = [link for link in discovered if link.rel == "item"]
         unique_items = self._deduplicate(item_links)
+
         return str(get_response.url), unique_items
 
     def _parse_link_headers(self, values: list[str], base_url: str, source: str) -> list[SignpostLink]:

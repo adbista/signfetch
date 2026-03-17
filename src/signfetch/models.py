@@ -18,7 +18,6 @@ class DownloadedItem:
     url: str
     saved_path: Path
     source: str
-    media_type: str | None = None
     filename: str | None = None
 
 

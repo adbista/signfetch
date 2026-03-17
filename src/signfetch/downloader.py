@@ -1,13 +1,14 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from urllib.parse import urlsplit
 from uuid import uuid4
 import zipfile
 
 from .http_client import HttpClient
 from .models import DownloadedItem, SignpostLink
 from .utils import (
-    extension_from_content_type,
     filename_from_content_disposition,
     filename_from_url,
     filename_from_url_extension,
@@ -19,61 +20,98 @@ class DataDownloader:
     def __init__(self, http_client: HttpClient) -> None:
         self._http = http_client
 
-    def download_all(self, items: list[SignpostLink], output_dir: Path) -> list[DownloadedItem]:
+    def download_all(
+        self,
+        items: list[SignpostLink],
+        output_dir: Path,
+        referer: str | None = None,
+        max_workers: int = 4,
+    ) -> list[DownloadedItem]:
         output_dir.mkdir(parents=True, exist_ok=True)
-        downloaded: list[DownloadedItem] = []
+        request_headers = self._build_download_headers(referer)
+        worker_count = max(1, min(max_workers, len(items) or 1))
+
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            buffered = list(executor.map(lambda item: self._fetch_item(item, request_headers), items))
+
         used_names: set[str] = set()
+        downloaded: list[DownloadedItem] = []
 
-        for item in items:
-            with self._http.open_stream(item.url) as response:
-                response.raise_for_status()
-                filename, packaged = self._resolve_filename(item.url, response.headers, used_names)
-                if packaged:
-                    temp_path = output_dir / f".tmp_{uuid4().hex}"
-                    with temp_path.open('wb') as handle:
-                        for chunk in response.iter_bytes():
-                            if chunk:
-                                handle.write(chunk)
-                    destination = output_dir / filename
-                    try:
-                        self._write_zip(temp_path, destination)
-                    finally:
-                        temp_path.unlink(missing_ok=True)
-                    media_type = 'application/zip'
-                else:
-                    destination = output_dir / filename
-                    with destination.open('wb') as handle:
-                        for chunk in response.iter_bytes():
-                            if chunk:
-                                handle.write(chunk)
-                    media_type = self._detect_media_type(response.headers.get('content-type'), item.url)
+        for item, final_url, headers, content in buffered:
+            filename, packaged = self._resolve_filename(final_url, headers, used_names)
+            destination = output_dir / filename
 
-                downloaded.append(
-                    DownloadedItem(
-                        url=item.url,
-                        saved_path=destination,
-                        source=item.source,
-                        media_type=media_type,
-                        filename=filename,
-                    )
+            if packaged:
+                temp_path = output_dir / f".tmp_{uuid4().hex}"
+                try:
+                    temp_path.write_bytes(content)
+                    self._write_zip(temp_path, destination)
+                finally:
+                    temp_path.unlink(missing_ok=True)
+            else:
+                destination.write_bytes(content)
+
+            downloaded.append(
+                DownloadedItem(
+                    url=item.url,
+                    saved_path=destination,
+                    source=item.source,
+                    filename=filename,
                 )
+            )
+
         return downloaded
+
+    def _fetch_item(
+        self,
+        item: SignpostLink,
+        request_headers: dict[str, str],
+    ) -> tuple[SignpostLink, str, dict[str, str], bytes]:
+        with self._http.open_stream(item.url, headers=request_headers) as response:
+            response.raise_for_status()
+            final_url = str(response.url)
+            headers = dict(response.headers)
+            content = b"".join(chunk for chunk in response.iter_bytes() if chunk)
+        return item, final_url, headers, content
+
+    def _build_download_headers(self, referer: str | None) -> dict[str, str]:
+        headers = {"Accept": "*/*"}
+
+        if not referer:
+            return headers
+
+        headers["Referer"] = referer
+
+        parts = urlsplit(referer)
+        if parts.scheme and parts.netloc:
+            headers["Origin"] = f"{parts.scheme}://{parts.netloc}"
+
+        return headers
 
     def _unique_filename(self, filename: str, used_names: set[str]) -> str:
         if filename not in used_names:
             used_names.add(filename)
             return filename
-        stem, dot, suffix = filename.partition('.')
+
+        path = Path(filename)
+        stem = path.stem
+        suffix = path.suffix
         counter = 2
+
         while True:
-            candidate = f"{stem}_{counter}{dot}{suffix}" if dot else f"{stem}_{counter}"
+            candidate = f"{stem}_{counter}{suffix}"
             if candidate not in used_names:
                 used_names.add(candidate)
                 return candidate
             counter += 1
 
-    def _resolve_filename(self, url: str, headers: dict[str, str], used_names: set[str]) -> tuple[str, bool]:
-        content_name = filename_from_content_disposition(headers.get('content-disposition'))
+    def _resolve_filename(
+        self,
+        url: str,
+        headers,
+        used_names: set[str],
+    ) -> tuple[str, bool]:
+        content_name = filename_from_content_disposition(headers.get("content-disposition"))
         if content_name:
             return self._unique_filename(content_name, used_names), False
 
@@ -81,30 +119,11 @@ class DataDownloader:
         if url_name:
             return self._unique_filename(url_name, used_names), False
 
-        extension = extension_from_content_type(headers.get('content-type'))
-        if extension:
-            base = filename_from_url(url)
-            base_stem = Path(base).stem
-            name = sanitize_filename(f"{base_stem}{extension}")
-            return self._unique_filename(name, used_names), False
-
         base = filename_from_url(url)
         base_stem = Path(base).stem
-        name = sanitize_filename(f"{base_stem}.zip")
-        return self._unique_filename(name, used_names), True
-
-    def _detect_media_type(self, content_type: str | None, url: str) -> str | None:
-        if content_type:
-            return content_type.split(';', 1)[0].strip().lower()
-        lowered = url.lower()
-        if lowered.endswith('.csv'):
-            return 'text/csv'
-        if lowered.endswith('.json'):
-            return 'application/json'
-        if lowered.endswith('.zip'):
-            return 'application/zip'
-        return None
+        fallback_name = sanitize_filename(f"{base_stem}.zip")
+        return self._unique_filename(fallback_name, used_names), True
 
     def _write_zip(self, source: Path, destination: Path) -> None:
-        with zipfile.ZipFile(destination, 'w', compression=zipfile.ZIP_DEFLATED) as zip_handle:
-            zip_handle.write(source, arcname='payload')
+        with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED) as zip_handle:
+            zip_handle.write(source, arcname="payload")
