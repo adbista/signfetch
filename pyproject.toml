@@ -11,7 +11,7 @@ requires-python = ">=3.11"
 authors = [
   { name = "Adam Biśta" }
 ]
-license = { text = "MIT" }
+license = "MIT"
 keywords = ["signposting", "fair", "download", "data", "linkset"]
 dependencies = [
   "httpx>=0.27.0",

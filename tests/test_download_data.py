@@ -72,6 +72,33 @@ def test_download_data_harvests_http_html_and_linkset_items_and_deduplicates(tmp
 
 
 @respx.mock
+def test_download_data_returns_empty_when_no_item_signposting(tmp_path: Path) -> None:
+    landing = 'https://example.org/record'
+
+    respx.head(landing).mock(
+        return_value=httpx.Response(
+            200,
+            request=httpx.Request('HEAD', landing),
+        )
+    )
+    respx.get(landing).mock(
+        return_value=httpx.Response(
+            200,
+            headers={'Content-Type': 'text/html'},
+            text='<html><head></head><body>no signposting items</body></html>',
+            request=httpx.Request('GET', landing),
+        )
+    )
+
+    result = download_data(landing, output_dir=tmp_path)
+
+    assert result.unique_item_count == 0
+    assert result.items == []
+    assert result.resolved_url == landing
+    assert list(tmp_path.iterdir()) == []
+
+
+@respx.mock
 
 def test_download_data_uses_unique_filenames_when_url_paths_collide(tmp_path: Path) -> None:
     landing = 'https://example.org/record'
